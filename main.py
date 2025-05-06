@@ -11,6 +11,11 @@ from get_profile_pic import get_instagram_profile_pic
 # Configuração da aplicação Flask
 app = Flask(__name__)
 
+# Suporte para token do Facebook Graph API
+FB_APP_ID = os.environ.get('FB_APP_ID', '')
+FB_APP_SECRET = os.environ.get('FB_APP_SECRET', '')
+FB_ACCESS_TOKEN = os.environ.get('FB_ACCESS_TOKEN', 'EAANSJdJyLWoBO7HvkFcosxQEWkKdZAnUaBqysG0q72dHD23ZAj2ODZBmiJQ2t9OiHntRWyrg59c9wTpAwZBDa3ZA7fFpsGyOavtrjVmg9Rcc4nhZBJa0DXe01knTFuNdnGwZBQZAAk8noCxsjtZC9e9LPruBm6p0EFiBpuF35ZBgBnoZB2PBelViSVz9zZAlu78U5swtHPhPk1fkMMCJO9V3bgZDZD')
+
 # Diretório para cache de imagens
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -201,6 +206,7 @@ def get_image(username):
         username = username.rsplit('.', 1)[0]
         
     try:
+        token = request.args.get('token', FB_ACCESS_TOKEN)
         # Verifica o cache primeiro
         cache_file = os.path.join(CACHE_DIR, f"{username}_profile_pic.jpg")
         
@@ -210,7 +216,7 @@ def get_image(username):
             (os.path.getmtime(cache_file) < time.time() - 86400)):
             
             # Obtém imagem nova e salva no cache
-            get_instagram_profile_pic(username, output_format='file', save_dir=CACHE_DIR)
+            get_instagram_profile_pic(username, output_format='file', save_dir=CACHE_DIR, fb_token=token)
         
         return send_file(cache_file, mimetype='image/jpeg')
     
@@ -223,11 +229,12 @@ def api_profile_pic(username):
     """API endpoint para obter informações da imagem de perfil"""
     try:
         format_type = request.args.get('format', 'url')
+        token = request.args.get('token', FB_ACCESS_TOKEN)
         
         if format_type not in ['url', 'base64', 'json']:
             return jsonify({'error': 'Formato inválido. Use "url", "base64" ou "json"'}), 400
         
-        result = get_instagram_profile_pic(username, output_format=format_type)
+        result = get_instagram_profile_pic(username, output_format=format_type, fb_token=token)
         
         # Para o formato URL, garantimos que ela termine com .jpg
         if format_type == 'url' and not result.endswith('.jpg'):
@@ -249,4 +256,4 @@ def api_profile_pic(username):
 if __name__ == '__main__':
     import os
     port = int(os.environ.get('PORT', 5000))
-    app.run(debug=False, host='0.0.0.0', port=port) 
+    app.run(debug=False, host='0.0.0.0', port=port)
