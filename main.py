@@ -11,11 +11,6 @@ from get_profile_pic import get_instagram_profile_pic
 # Configuração da aplicação Flask
 app = Flask(__name__)
 
-# Suporte para token do Facebook Graph API
-FB_APP_ID = os.environ.get('FB_APP_ID', '')
-FB_APP_SECRET = os.environ.get('FB_APP_SECRET', '')
-FB_ACCESS_TOKEN = os.environ.get('FB_ACCESS_TOKEN', 'EAANSJdJyLWoBO7HvkFcosxQEWkKdZAnUaBqysG0q72dHD23ZAj2ODZBmiJQ2t9OiHntRWyrg59c9wTpAwZBDa3ZA7fFpsGyOavtrjVmg9Rcc4nhZBJa0DXe01knTFuNdnGwZBQZAAk8noCxsjtZC9e9LPruBm6p0EFiBpuF35ZBgBnoZB2PBelViSVz9zZAlu78U5swtHPhPk1fkMMCJO9V3bgZDZD')
-
 # Diretório para cache de imagens
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -142,32 +137,38 @@ HTML_TEMPLATE = '''
         <div class="result">
             {% if username %}
                 <h2 style="text-align: center;">Resultados para @{{ username }}</h2>
-                <img src="/image/{{ username }}" class="profile-pic" alt="{{ username }} profile picture">
                 
-                <div class="url-box">
-                    <div class="url-title">URL Direta da Imagem:</div>
-                    <div class="url-content" id="url1">{{ request.url_root }}image/{{ username }}.jpg</div>
-                    <button class="copy-btn" onclick="copyToClipboard('url1')">Copiar</button>
-                </div>
-                
-                <div class="url-box">
-                    <div class="url-title">URL para API (JSON):</div>
-                    <div class="url-content" id="url2">{{ request.url_root }}api/profile-pic/{{ username }}</div>
-                    <button class="copy-btn" onclick="copyToClipboard('url2')">Copiar</button>
-                </div>
-                
-                <div class="url-box">
-                    <div class="url-title">Tag HTML para Imagem:</div>
-                    <div class="url-content" id="url3">&lt;img src="{{ request.url_root }}image/{{ username }}.jpg" alt="{{ username }} profile picture"&gt;</div>
-                    <button class="copy-btn" onclick="copyToClipboard('url3')">Copiar</button>
-                </div>
-                
+                {% if error %}
+                    <div style="color: red; text-align: center; margin: 20px 0;">
+                        {{ error }}
+                    </div>
+                {% else %}
+                    <img src="{{ imgbb_url }}" class="profile-pic" alt="{{ username }} profile picture">
+                    
+                    <div class="url-box">
+                        <div class="url-title">URL Direta da Imagem:</div>
+                        <div class="url-content" id="url1">{{ imgbb_url }}</div>
+                        <button class="copy-btn" onclick="copyToClipboard('url1')">Copiar</button>
+                    </div>
+                    
+                    <div class="url-box">
+                        <div class="url-title">URL para API (JSON):</div>
+                        <div class="url-content" id="url2">{{ request.url_root }}api/profile-pic/{{ username }}</div>
+                        <button class="copy-btn" onclick="copyToClipboard('url2')">Copiar</button>
+                    </div>
+                    
+                    <div class="url-box">
+                        <div class="url-title">Tag HTML para Imagem:</div>
+                        <div class="url-content" id="url3">&lt;img src="{{ imgbb_url }}" alt="{{ username }} profile picture"&gt;</div>
+                        <button class="copy-btn" onclick="copyToClipboard('url3')">Copiar</button>
+                    </div>
+                {% endif %}
             {% endif %}
         </div>
     </div>
     
     <footer>
-        <p>Esta ferramenta extrai URLs diretas de imagens de perfil do Instagram, contornando os problemas de hashes.</p>
+        <p>Esta ferramenta extrai URLs diretas de imagens de perfil do Instagram via ImgBB.</p>
     </footer>
     
     <script>
@@ -193,6 +194,21 @@ HTML_TEMPLATE = '''
 def index():
     """Rota principal da aplicação"""
     username = request.args.get('username', '')
+    
+    if username:
+        try:
+            # Obter foto de perfil e fazer upload para ImgBB
+            result = get_instagram_profile_pic(username, output_format='json')
+            
+            if isinstance(result, dict) and 'error' in result:
+                return render_template_string(HTML_TEMPLATE, username=username, error=result['error'], request=request)
+            
+            imgbb_url = result['direct_url'] if isinstance(result, dict) else result
+            
+            return render_template_string(HTML_TEMPLATE, username=username, imgbb_url=imgbb_url, request=request)
+        except Exception as e:
+            return render_template_string(HTML_TEMPLATE, username=username, error=str(e), request=request)
+    
     return render_template_string(HTML_TEMPLATE, username=username, request=request)
 
 
@@ -200,24 +216,43 @@ def index():
 @app.route('/image/<username>.jpg')  # Rota que termina com .jpg
 @app.route('/image/<username>.png')  # Rota que termina com .png
 def get_image(username):
-    """Rota para servir a imagem de perfil diretamente"""
+    """Rota para servir a imagem de perfil via ImgBB"""
     # Remove extensões do username se estiverem presentes
     if username.endswith(('.jpg', '.png')):
         username = username.rsplit('.', 1)[0]
         
     try:
-        token = request.args.get('token', FB_ACCESS_TOKEN)
         # Verifica o cache primeiro
         cache_file = os.path.join(CACHE_DIR, f"{username}_profile_pic.jpg")
+        cache_info = os.path.join(CACHE_DIR, f"{username}_profile_pic_info.json")
         
         # Se o cache tem mais de 1 dia ou não existe, atualize-o
-        if not os.path.exists(cache_file) or \
-           (os.path.exists(cache_file) and \
-            (os.path.getmtime(cache_file) < time.time() - 86400)):
+        if not os.path.exists(cache_file) or not os.path.exists(cache_info) or \
+           (os.path.exists(cache_file) and (os.path.getmtime(cache_file) < time.time() - 86400)):
             
-            # Obtém imagem nova e salva no cache
-            get_instagram_profile_pic(username, output_format='file', save_dir=CACHE_DIR, fb_token=token)
+            # Obtém imagem nova, faz upload para ImgBB e salva no cache
+            result = get_instagram_profile_pic(username, output_format='file', save_dir=CACHE_DIR)
+            
+            if isinstance(result, dict) and 'error' in result:
+                return jsonify({'error': result['error']}), 500
+            
+            # Salvar informações do ImgBB para referência futura
+            if isinstance(result, dict) and 'file_path' in result:
+                with open(cache_info, 'w') as f:
+                    json.dump(result, f)
         
+        # Se temos as informações do ImgBB salvas, redirecionar para ImgBB
+        if os.path.exists(cache_info):
+            try:
+                with open(cache_info, 'r') as f:
+                    imgbb_data = json.load(f)
+                
+                # Redirecionar para a URL direta do ImgBB
+                return redirect(imgbb_data['direct_url'])
+            except:
+                pass
+        
+        # Fallback: enviar o arquivo local
         return send_file(cache_file, mimetype='image/jpeg')
     
     except Exception as e:
@@ -229,25 +264,34 @@ def api_profile_pic(username):
     """API endpoint para obter informações da imagem de perfil"""
     try:
         format_type = request.args.get('format', 'url')
-        token = request.args.get('token', FB_ACCESS_TOKEN)
         
-        if format_type not in ['url', 'base64', 'json']:
+        if format_type not in ['url', 'json', 'base64']:
             return jsonify({'error': 'Formato inválido. Use "url", "base64" ou "json"'}), 400
         
-        result = get_instagram_profile_pic(username, output_format=format_type, fb_token=token)
+        result = get_instagram_profile_pic(username, output_format=format_type)
         
-        # Para o formato URL, garantimos que ela termine com .jpg
-        if format_type == 'url' and not result.endswith('.jpg'):
-            if '?' in result:
-                result = result.split('?')[0]
-            if not result.endswith('.jpg'):
-                result += '.jpg'
+        if isinstance(result, dict) and 'error' in result:
+            return jsonify({'error': result['error']}), 500
         
-        return jsonify({
-            'username': username,
-            'format': format_type,
-            'result': result
-        })
+        # Prepara a resposta JSON
+        if format_type == 'url':
+            return jsonify({
+                'username': username,
+                'format': format_type,
+                'url': result
+            })
+        elif format_type == 'json':
+            return jsonify({
+                'username': username,
+                'format': format_type,
+                'data': result
+            })
+        else:  # base64
+            return jsonify({
+                'username': username,
+                'format': format_type,
+                'base64': result
+            })
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
